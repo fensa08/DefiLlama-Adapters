@@ -1,7 +1,7 @@
 const sdk = require("@defillama/sdk");
 const { getChainTransform } = require("../helper/portedTokens");
 const abi = require("./abi.json");
-const Web3 = require("../config/web3.js");
+const ethers = require("ethers");
 
 const contracts = {
   optimism: {
@@ -16,15 +16,22 @@ const contracts = {
     KROM: "0x55ff62567f09906a85183b866df84bf599a4bf70",
     position: "0x02c282f60fb2f3299458c2b85eb7e303b25fc6f0",
   },
+  polygon: {
+    KROM: "0x14Af1F2f02DCcB1e43402339099A05a5E363b83c",
+    position: "0xD1fDF0144be118C30a53E1d08Cc1E61d600E508e",
+  },
 };
 
-const multicall_address = {
-  ethereum: "0x1F98415757620B543A52E61c46B32eB19261F984",
-  arbitrum: "0xadF885960B47eA2CD9B55E6DAc6B42b7Cb2806dB",
-};
+
+const provider_url = {
+  'ethereum': 'https://eth-mainnet.g.alchemy.com/v2/qLULTF0ZhLgJsaD5pnY5Z1pLwhsD5OT4',
+  'polygon': 'https://polygon-mainnet.g.alchemy.com/v2/ad_s6acLdT229haDGnQfpSPNa9LfF6Qm',
+  'arbitrum': 'https://arb-mainnet.g.alchemy.com/v2/hCdW6D7bYEyTmBkU9WCdwCQ6kAQBWD-2',
+}
 
 const tvl = (chain) =>
   async function (timestamp, ethBlock, chainBlocks) {
+
     const krom_position = contracts[chain].position;
 
     let transform = await getChainTransform(chain);
@@ -67,249 +74,54 @@ const tvl = (chain) =>
         chain,
         block,
       });
-    } else {
-      const calls = [];
+    }
+     else {
+      const wallet = ethers.Wallet.createRandom();
+      const connection = new ethers.providers.JsonRpcProvider(provider_url[chain])
+      const signer = wallet.connect(connection);
+      const kromPositionContract = new ethers.Contract(krom_position, [`function orders(uint256 tokenId) view returns (
+        address owner,
+        address token0,
+        address token1,
+        uint24 fee,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 liquidity,
+        bool processed,
+        uint256 tokensOwed0,
+        uint256 tokensOwed1
+    )`], signer);
+
+      const validOrders = []
       for (let i = 1; i <= 1550; i++) {
-        const callData = Web3.eth.abi.encodeFunctionCall(
-          {
-            inputs: [
-              {
-                internalType: "uint256",
-                name: "tokenId",
-                type: "uint256",
-              },
-            ],
-            name: "orders",
-            outputs: [
-              {
-                internalType: "address",
-                name: "owner",
-                type: "address",
-              },
-              {
-                internalType: "address",
-                name: "token0",
-                type: "address",
-              },
-              {
-                internalType: "address",
-                name: "token1",
-                type: "address",
-              },
-              {
-                internalType: "uint24",
-                name: "fee",
-                type: "uint24",
-              },
-              {
-                internalType: "int24",
-                name: "tickLower",
-                type: "int24",
-              },
-              {
-                internalType: "int24",
-                name: "tickUpper",
-                type: "int24",
-              },
-              {
-                internalType: "uint128",
-                name: "liquidity",
-                type: "uint128",
-              },
-              {
-                internalType: "bool",
-                name: "processed",
-                type: "bool",
-              },
-              {
-                internalType: "uint256",
-                name: "tokensOwed0",
-                type: "uint256",
-              },
-              {
-                internalType: "uint256",
-                name: "tokensOwed1",
-                type: "uint256",
-              },
-            ],
-            stateMutability: "view",
-            type: "function",
-          },
-          [i]
-        );
 
-        const gasLimit = 60000000;
-        const target = krom_position;
-        calls.push([target, gasLimit, callData]);
+       try{
+        const result = await kromPositionContract.orders(i, {gasLimit: chain == 'arbitrum' ? 100000000 : 100000});
+        validOrders.push(result);
+       }
+       catch(exception){
+       }      
       }
+     orders.output = [];
+      validOrders.forEach( order => {
 
-      const encodedData = Web3.eth.abi.encodeFunctionCall(
-        {
-          inputs: [
-            {
-              components: [
-                {
-                  internalType: "address",
-                  name: "target",
-                  type: "address",
-                },
-                {
-                  internalType: "uint256",
-                  name: "gasLimit",
-                  type: "uint256",
-                },
-                {
-                  internalType: "bytes",
-                  name: "callData",
-                  type: "bytes",
-                },
-              ],
-              internalType: "struct UniswapInterfaceMulticall.Call[]",
-              name: "calls",
-              type: "tuple[]",
-            },
-          ],
-          name: "multicall",
-          outputs: [
-            {
-              internalType: "uint256",
-              name: "blockNumber",
-              type: "uint256",
-            },
-            {
-              components: [
-                {
-                  internalType: "bool",
-                  name: "success",
-                  type: "bool",
-                },
-                {
-                  internalType: "uint256",
-                  name: "gasUsed",
-                  type: "uint256",
-                },
-                {
-                  internalType: "bytes",
-                  name: "returnData",
-                  type: "bytes",
-                },
-              ],
-              internalType: "struct UniswapInterfaceMulticall.Result[]",
-              name: "returnData",
-              type: "tuple[]",
-            },
-          ],
-          stateMutability: "nonpayable",
-          type: "function",
-        },
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        [calls]
-      );
-
-      const estimateGas = await Web3.eth.estimateGas({
-        to: multicall_address[chain],
-        data: encodedData,
-      });
-
-      const result = await Web3.eth.call({
-        to: multicall_address[chain],
-        data: encodedData,
-        gas: estimateGas,
-        gasLimit: 600000000,
-      });
-
-      const decodedResult = Web3.eth.abi.decodeParameters(
-        [
-          {
-            internalType: "uint256",
-            name: "blockNumber",
-            type: "uint256",
-          },
-          {
-            components: [
-              {
-                internalType: "bool",
-                name: "success",
-                type: "bool",
-              },
-              {
-                internalType: "uint256",
-                name: "gasUsed",
-                type: "uint256",
-              },
-              {
-                internalType: "bytes",
-                name: "returnData",
-                type: "bytes",
-              },
-            ],
-            internalType: "struct UniswapInterfaceMulticall.Result[]",
-            name: "returnData",
-            type: "tuple[]",
-          },
-        ],
-        result
-      );
-      const array = decodedResult[1];
-      const filteredObj = array
-        .filter((element) => element.success !== false)
-        .map((order) =>
-          Web3.eth.abi.decodeParameters(
-            [
-              {
-                type: "address",
-                name: "owner",
-              },
-              {
-                type: "address",
-                name: "token0",
-              },
-              {
-                type: "address",
-                name: "token1",
-              },
-              {
-                type: "uint24",
-                name: "fee",
-              },
-              {
-                type: "int24",
-                name: "tickLower",
-              },
-              {
-                type: "int24",
-                name: "tickUpper",
-              },
-
-              {
-                type: "uint128",
-                name: "liquidity",
-              },
-
-              {
-                type: "bool",
-                name: "processed",
-              },
-              {
-                type: "uint256",
-                name: "tokensOwed0",
-              },
-
-              {
-                type: "uint256",
-                name: "tokensOwed1",
-              },
-            ],
-            order[2]
-          )
-        );
-      orders.output = [];
-      orders.output.output = filteredObj;
+        orders.output.push({
+          token0: order.token0,
+          token1: order.token1,
+          tokensOwed0: order.tokensOwed0,
+          tokensOwed1: order.tokensOwed1, 
+          tickUpper: order.tickUpper,
+          tickLower: order.tickLower,
+          owner: order.owner,
+          fee: order.fee,
+          liquidity: order.liquidity,
+        })
+      })   
     }
 
     // Retrieve valid orders and add tokens owed to balances
-    const valid_orders = orders.output.map((order) => order.output);
+    const valid_orders = chain === 'optimism' ? orders.output.map((order) => order.output) : orders.output
+
     valid_orders.forEach((order) => {
       sdk.util.sumSingleBalance(
         balances,
@@ -354,12 +166,16 @@ module.exports = {
     staking: staking("optimism"),
   },
   arbitrum: {
-    tvl: () => ({}),
+    tvl: tvl("arbitrum"),
     staking: staking("arbitrum"),
   },
   ethereum: {
     tvl: tvl("ethereum"),
     staking: staking("ethereum"),
+  },
+  polygon: {
+    tvl: tvl("polygon"),
+    staking: staking("polygon"),
   },
 };
 // UniswapV3Pool NonfungiblePositionManager has a low level mint method
